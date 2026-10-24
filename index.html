@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wanderlog</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">✈︎</span>
+      <div>
+        <h1 id="trip-name">My Trip</h1>
+        <p id="trip-dates" class="muted"></p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btn-settings" class="ghost" title="Trip settings">⚙︎ Trip</button>
+      <button id="btn-export" class="ghost" title="Download a backup">⬇︎ Export</button>
+      <label class="ghost button" title="Restore from a backup">
+        ⬆︎ Import <input id="file-import" type="file" accept="application/json" hidden />
+      </label>
+      <button id="btn-add" class="primary">+ Add stop</button>
+    </div>
+  </header>
+
+  <section class="progress-wrap">
+    <div class="progress"><div id="progress-bar"></div></div>
+    <p id="progress-label" class="muted"></p>
+  </section>
+
+  <section class="stats" id="stats"></section>
+
+  <main class="layout">
+    <div id="map"></div>
+    <aside class="timeline">
+      <div class="timeline-head">
+        <h2>Itinerary</h2>
+        <div class="filters" role="tablist">
+          <button data-filter="all" class="chip active">All</button>
+          <button data-filter="Europe" class="chip">Europe</button>
+          <button data-filter="Africa" class="chip">Africa</button>
+          <button data-filter="Asia" class="chip">Asia</button>
+        </div>
+      </div>
+      <ol id="stop-list"></ol>
+      <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or <strong>⬆︎ Import</strong> a saved plan.</p>
+    </aside>
+  </main>
+
+  <!-- Add / edit stop -->
+  <dialog id="stop-dialog">
+    <form id="stop-form" method="dialog">
+      <h2 id="stop-dialog-title">Add stop</h2>
+
+      <label>Search a place
+        <div class="search-row">
+          <input id="place-search" type="search" placeholder="e.g. Kyoto, Lisbon, Hanoi…" autocomplete="off" />
+          <button type="button" id="btn-search" class="ghost">Search</button>
+        </div>
+      </label>
+      <ul id="search-results"></ul>
+
+      <div class="grid2">
+        <label>City / place <input name="name" required /></label>
+        <label>Country <input name="country" required /></label>
+        <label>Latitude <input name="lat" type="number" step="any" required /></label>
+        <label>Longitude <input name="lng" type="number" step="any" required /></label>
+        <label>Status
+          <select name="status">
+            <option value="booked">✅ Booked</option>
+            <option value="tentative">✏️ Tentative</option>
+            <option value="idea">💡 Idea (no dates yet)</option>
+          </select>
+        </label>
+        <label>Leg <input name="leg" placeholder="e.g. Leg 2 · Balkans" /></label>
+        <label class="date-field">Arrive <input name="arrive" type="date" required /></label>
+        <label class="date-field">Depart <input name="depart" type="date" required /></label>
+        <label>Region
+          <select name="continent">
+            <option>Europe</option>
+            <option>Africa</option>
+            <option>Asia</option>
+          </select>
+        </label>
+        <label>Transport here
+          <select name="transport">
+            <option value="">—</option>
+            <option>✈️ Plane</option>
+            <option>🚆 Train</option>
+            <option>🚌 Bus</option>
+            <option>⛴️ Ferry</option>
+            <option>🚗 Car</option>
+          </select>
+        </label>
+      </div>
+
+      <label>Rating
+        <div class="stars" id="star-input"></div>
+        <input name="rating" type="hidden" value="0" />
+      </label>
+
+      <label>Journal / highlights
+        <textarea name="notes" rows="4" placeholder="Best ramen of my life, got lost in the old town…"></textarea>
+      </label>
+
+      <label>Photo URL <input name="photo" type="url" placeholder="https://…" /></label>
+
+      <menu>
+        <button type="button" id="btn-delete" class="danger" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" id="btn-cancel" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- Trip settings -->
+  <dialog id="settings-dialog">
+    <form id="settings-form" method="dialog">
+      <h2>Trip settings</h2>
+      <label>Trip name <input name="name" required /></label>
+      <div class="grid2">
+        <label>Start date <input name="start" type="date" required /></label>
+        <label>End date <input name="end" type="date" required /></label>
+      </div>
+      <label>Home city (optional — the route starts and ends here)
+        <input name="homeName" placeholder="e.g. Chicago" />
+      </label>
+      <div class="grid2">
+        <label>Home latitude <input name="homeLat" type="number" step="any" /></label>
+        <label>Home longitude <input name="homeLng" type="number" step="any" /></label>
+      </div>
+      <menu>
+        <button type="button" id="btn-demo" class="ghost">Load sample trip</button>
+        <span class="spacer"></span>
+        <button type="button" id="btn-settings-cancel" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
