@@ -221,6 +221,18 @@ input, select, textarea {
 .stars { display: flex; gap: 2px; }
 .stars button { border: none; background: none; padding: 0 2px; font-size: 1.4rem; color: var(--line); }
 .stars button.on { color: #f59e0b; }
+h3 { margin: 8px 0 0; font-size: .95rem; }
+#editor-list { list-style: none; margin: 0; padding: 0; }
+#editor-list li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+#editor-list button { padding: 2px 10px; font-size: .8rem; }
+.view-banner {
+  margin: 0 20px 10px; padding: 8px 14px; border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: .9rem;
+}
+.readonly .actions { display: none; }
+.error { color: #dc2626; margin: 0; font-size: .85rem; }
+#btn-sync.synced { color: #059669; }
+#btn-sync.problem { color: #dc2626; border-color: #fca5a5; }
 menu { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 8px 0 0; }
 [hidden] { display: none !important; }
 .spacer { flex: 1; }

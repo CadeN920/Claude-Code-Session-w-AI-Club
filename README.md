@@ -15,6 +15,20 @@ A no-build web app for tracking a 4.5-month trip through Europe and Asia.
 
 Your own plan isn't stored in this repo: keep it as an Export file and use ⬆︎ Import to load it.
 
+## Sync and sharing (optional)
+With a free [Supabase](https://supabase.com) project, the app adds:
+- **☁︎ Sign in to sync:** your trip stays the same on every device you sign in on.
+- **👥 Share → Travel partners:** add someone's email; once they create an account with it, they can edit the same trip.
+- **👥 Share → Family link:** a view-only link that needs no account. You can make a new one (the old one stops working) or turn it off.
+
+Setup:
+1. Create a Supabase project.
+2. In **SQL Editor**, run [`supabase/setup.sql`](supabase/setup.sql).
+3. Under **Authentication → URL Configuration**, set **Site URL** to the site's address so email confirmation links come back to the app.
+4. Put the project's URL and anon (publishable) key in [`config.js`](config.js).
+
+The anon key is designed to be public: the database's row-level security only lets each account read the trips it owns or was added to, and the family link only reveals the one trip it belongs to. Without `config.js` values, the app works on a single device as before.
+
 ## Run it
 Open `index.html` in a browser, or serve the folder:
 

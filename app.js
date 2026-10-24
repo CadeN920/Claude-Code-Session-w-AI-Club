@@ -1,4 +1,5 @@
-// Wanderlog — a tiny travel tracker. All data lives in localStorage.
+// Wanderlog — a tiny travel tracker. Data lives in localStorage and, when
+// signed in, is also synced to Supabase so every device sees the same trip.
 
 const STORAGE_KEY = 'wanderlog-v1';
 const DAY = 24 * 60 * 60 * 1000;
@@ -66,15 +67,27 @@ function load() {
   return defaultState();
 }
 
-let state = load();
+// A family "view only" link carries ?view=<token>. That mode never reads or
+// writes this browser's saved trip.
+const viewToken = new URLSearchParams(location.search).get('view');
+const readOnly = !!viewToken;
+
+let state = readOnly ? defaultState() : load();
 let filter = 'all';
 
-function save() {
+function saveLocal() {
+  if (readOnly) return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (e) {
     console.warn('Could not save', e);
   }
+}
+
+// Every edit goes through here: save on this device, then upload if signed in.
+function save() {
+  saveLocal();
+  queueUpload();
 }
 
 // "Ideas" are places you're considering that don't have dates yet.
@@ -114,6 +127,7 @@ const markerLayer = L.layerGroup().addTo(map);
 const markersById = {};
 
 map.on('click', async (e) => {
+  if (readOnly) return;
   const latlng = e.latlng.wrap();
   openStopDialog(null, { lat: latlng.lat, lng: latlng.lng });
   reverseGeocode(latlng.lat, latlng.lng);
@@ -354,6 +368,7 @@ $('#star-input').addEventListener('click', (e) => {
 });
 
 function openStopDialog(stop, preset = {}) {
+  if (readOnly) return;
   editingId = stop?.id ?? null;
   stopForm.reset();
   $('#search-results').innerHTML = '';
@@ -594,6 +609,376 @@ function sampleTrip() {
   };
 }
 
+// ---------- cloud sync (Supabase, optional) ----------
+
+const PENDING_KEY = 'wanderlog-pending'; // set while this device has edits the cloud hasn't seen
+const TRIP_ID_KEY = 'wanderlog-trip-id';
+const cfg = window.WANDERLOG_CONFIG || {};
+const sb = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
+  ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey)
+  : null;
+
+let user = null;
+let trip = null;         // { id, owner_id, share_token } of the cloud trip this device follows
+let busy = false;        // a sync is in flight
+let editVersion = 0;     // bumps on every local edit
+let lastCloudUpdate = null;
+let uploadTimer = null;
+
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function storageSet(key, value) {
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch { /* nothing to do */ }
+}
+const hasPending = () => storageGet(PENDING_KEY) === '1';
+const setPending = (on) => storageSet(PENDING_KEY, on ? '1' : null);
+
+function rememberTrip(t) {
+  trip = t;
+  storageSet(TRIP_ID_KEY, t?.id ?? null);
+}
+
+// The database may reorder object keys, so compare trips with sorted keys.
+function sameTrip(a, b) {
+  const canon = (v) => Array.isArray(v) ? v.map(canon)
+    : v && typeof v === 'object'
+      ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]))
+      : v;
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
+
+const SYNC_LABELS = {
+  'signed-out': ['☁︎ Sign in to sync', ''],
+  saving: ['☁︎ Saving…', ''],
+  synced: ['☁︎ Synced', 'synced'],
+  offline: ['☁︎ Offline — will sync', 'problem'],
+  error: ['⚠︎ Sync problem', 'problem'],
+};
+
+function setSyncState(name) {
+  const [label, cls] = SYNC_LABELS[name];
+  const btn = $('#btn-sync');
+  btn.textContent = label;
+  btn.className = `ghost ${cls}`;
+  $('#btn-share').hidden = !user;
+  $('#auth-status').textContent = {
+    saving: 'Saving your latest changes…',
+    synced: 'All changes are saved to your account.',
+    offline: "You're offline. Changes are saved on this device and will upload when you're back online.",
+    error: "Couldn't reach the server. Changes are saved on this device; try Sync now.",
+  }[name] ?? '';
+}
+
+function syncFailed(e) {
+  console.warn('Sync failed', e);
+  setSyncState(navigator.onLine ? 'error' : 'offline');
+}
+
+// The trip this account follows: the one used last on this device, otherwise
+// the most recently updated trip it owns or was added to as an editor.
+async function fetchCloudTrip() {
+  const { data, error } = await sb.from('trips')
+    .select('id, owner_id, share_token, data, updated_at')
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  const lastUsed = storageGet(TRIP_ID_KEY);
+  return data.find((t) => t.id === lastUsed) ?? data[0] ?? null;
+}
+
+async function uploadTrip() {
+  const version = editVersion;
+  const row = { data: state, updated_at: new Date().toISOString() };
+  setSyncState('saving');
+  const cols = 'id, owner_id, share_token';
+  // After a reload only the trip's id is known, so fall back to the saved one.
+  const id = trip?.id ?? storageGet(TRIP_ID_KEY);
+  let result = id
+    ? await sb.from('trips').update(row).eq('id', id).select(cols).single()
+    : null;
+  // No trip yet, or it's gone (deleted, or no longer shared with us): start one.
+  if (!result || result.error?.code === 'PGRST116') {
+    result = await sb.from('trips').insert(row).select(cols).single();
+  }
+  const { data, error } = result;
+  if (error) throw error;
+  rememberTrip(data);
+  lastCloudUpdate = row.updated_at;
+  // Only clear the flag if nothing changed while we were uploading.
+  if (version === editVersion) {
+    setPending(false);
+    setSyncState('synced');
+  }
+}
+
+// Called after every edit: upload shortly after the user stops typing.
+function queueUpload() {
+  if (!user) return;
+  editVersion++;
+  setPending(true);
+  setSyncState('saving');
+  clearTimeout(uploadTimer);
+  uploadTimer = setTimeout(async () => {
+    if (busy) return queueUpload();
+    busy = true;
+    try { await uploadTrip(); } catch (e) { syncFailed(e); } finally { busy = false; }
+  }, 800);
+}
+
+// Make this device and the cloud agree. Unsynced edits here win; otherwise
+// the cloud copy (possibly edited on another device or by a travel partner)
+// replaces this one.
+async function reconcile({ justSignedIn = false } = {}) {
+  if (!user || busy) return;
+  busy = true;
+  try {
+    if (hasPending()) return await uploadTrip();
+
+    const cloud = await fetchCloudTrip();
+    if (!cloud) {
+      rememberTrip(null);
+      if (state.stops.length) await uploadTrip();
+      else setSyncState('synced');
+      return;
+    }
+    rememberTrip(cloud);
+    if (lastCloudUpdate && Date.parse(cloud.updated_at) === Date.parse(lastCloudUpdate)) {
+      return setSyncState('synced');
+    }
+    if (!sameTrip(cloud.data, state)) {
+      const keepThisDevice = justSignedIn && state.stops.length && !confirm(
+        `Your account already has a trip ("${cloud.data.trip.name}", ${cloud.data.stops.length} stops).\n\n` +
+        `OK: show that trip on this device.\n` +
+        `Cancel: replace it with the trip on this device ("${state.trip.name}", ${state.stops.length} stops).`
+      );
+      if (keepThisDevice) return await uploadTrip();
+      state = migrate(cloud.data);
+      saveLocal();
+      render(justSignedIn);
+    }
+    lastCloudUpdate = cloud.updated_at;
+    setSyncState('synced');
+  } catch (e) {
+    syncFailed(e);
+  } finally {
+    busy = false;
+  }
+}
+
+// ---------- sign in / out ----------
+
+const authDialog = $('#auth-dialog');
+const authForm = $('#auth-form');
+
+function showError(id, msg) {
+  $(id).textContent = msg;
+  $(id).hidden = !msg;
+}
+
+$('#btn-sync').addEventListener('click', () => {
+  $('#auth-signed-out').hidden = !!user;
+  $('#auth-signed-in').hidden = !user;
+  $('#auth-email').textContent = user?.email ?? '';
+  showError('#auth-error', '');
+  authDialog.showModal();
+});
+$('#btn-auth-cancel').addEventListener('click', () => authDialog.close());
+$('#btn-auth-close').addEventListener('click', () => authDialog.close());
+$('#btn-sync-now').addEventListener('click', () => reconcile());
+
+async function signIn(create) {
+  const email = authForm.elements.email.value.trim();
+  const password = authForm.elements.password.value;
+  if (!email || !password) return showError('#auth-error', 'Enter your email and a password.');
+  if (create && password.length < 6) return showError('#auth-error', 'Use a password of at least 6 characters.');
+  showError('#auth-error', '');
+  try {
+    const { data, error } = create
+      ? await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } })
+      : await sb.auth.signInWithPassword({ email, password });
+    if (error) return showError('#auth-error', error.message);
+    if (!data.session) {
+      return showError('#auth-error', 'Almost done: check your email and click the confirmation link. It brings you back here signed in.');
+    }
+    user = data.session.user;
+    authForm.elements.password.value = '';
+    authDialog.close();
+    await reconcile({ justSignedIn: true });
+  } catch (e) {
+    showError('#auth-error', "Couldn't reach the server. Check your connection and try again.");
+  }
+}
+
+authForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  signIn(false);
+});
+$('#btn-signup').addEventListener('click', () => signIn(true));
+
+$('#btn-signout').addEventListener('click', async () => {
+  if (hasPending() && !confirm("Some changes haven't uploaded yet and will be lost. Sign out anyway?")) return;
+  try { await sb.auth.signOut(); } catch { /* still clear this device */ }
+  user = null;
+  lastCloudUpdate = null;
+  rememberTrip(null);
+  setPending(false);
+  state = defaultState();
+  saveLocal();
+  authDialog.close();
+  render(true);
+  setSyncState('signed-out');
+});
+
+// ---------- sharing ----------
+
+const shareDialog = $('#share-dialog');
+const shareUrl = (token) => `${location.origin}${location.pathname}?view=${token}`;
+
+async function renderShareDialog() {
+  const isOwner = trip?.owner_id === user.id;
+  $('#share-owner').hidden = !isOwner;
+  $('#share-not-owner').hidden = isOwner;
+  if (!isOwner) return;
+
+  $('#share-link-on').hidden = !trip.share_token;
+  $('#btn-make-link').hidden = !!trip.share_token;
+  $('#share-link').value = trip.share_token ? shareUrl(trip.share_token) : '';
+
+  const { data, error } = await sb.from('trip_editors').select('email').eq('trip_id', trip.id).order('email');
+  if (error) throw error;
+  const list = $('#editor-list');
+  list.innerHTML = data.length ? '' : '<li class="muted">No travel partners added yet.</li>';
+  data.forEach(({ email }) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${escapeHTML(email)}</span>`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => shareAction(async () => {
+      if (!confirm(`Stop sharing this trip with ${email}?`)) return;
+      const { error } = await sb.from('trip_editors').delete().eq('trip_id', trip.id).eq('email', email);
+      if (error) throw error;
+    }));
+    li.appendChild(remove);
+    list.appendChild(li);
+  });
+}
+
+// Run a sharing change, then refresh the dialog; show any error inline.
+async function shareAction(fn) {
+  showError('#share-error', '');
+  try {
+    await fn();
+    await renderShareDialog();
+  } catch (e) {
+    console.warn(e);
+    showError('#share-error', e.message || "Couldn't reach the server. Try again.");
+  }
+}
+
+$('#btn-share').addEventListener('click', () => {
+  shareDialog.showModal();
+  shareAction(async () => {
+    // A brand-new trip may not be in the cloud yet.
+    if (!trip) await uploadTrip();
+  });
+});
+$('#btn-share-close').addEventListener('click', () => shareDialog.close());
+
+$('#btn-add-editor').addEventListener('click', () => shareAction(async () => {
+  const email = $('#editor-email').value.trim().toLowerCase();
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Enter your travel partner\'s email address.');
+  const { error } = await sb.from('trip_editors').insert({ trip_id: trip.id, email });
+  if (error) throw new Error(error.code === '23505' ? `${email} is already added.` : error.message);
+  $('#editor-email').value = '';
+}));
+
+async function makeShareLink() {
+  const { data, error } = await sb.rpc('new_share_link', { trip: trip.id });
+  if (error) throw error;
+  trip.share_token = data;
+}
+$('#btn-make-link').addEventListener('click', () => shareAction(makeShareLink));
+$('#btn-reset-link').addEventListener('click', () => shareAction(async () => {
+  if (confirm('Make a new link? The current link will stop working.')) await makeShareLink();
+}));
+$('#btn-stop-link').addEventListener('click', () => shareAction(async () => {
+  if (!confirm('Turn off the family link? Anyone using it will no longer see the trip.')) return;
+  const { error } = await sb.rpc('stop_share_link', { trip: trip.id });
+  if (error) throw error;
+  trip.share_token = null;
+}));
+$('#btn-copy-link').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('#share-link').value);
+    $('#btn-copy-link').textContent = 'Copied!';
+  } catch {
+    $('#share-link').select();
+    $('#btn-copy-link').textContent = 'Press Ctrl/Cmd+C';
+  }
+  setTimeout(() => { $('#btn-copy-link').textContent = 'Copy'; }, 2000);
+});
+
+// ---------- startup ----------
+
+async function startSync() {
+  if (!sb) return; // sync not configured: the app works on this device only
+  $('#btn-sync').hidden = false;
+  try {
+    const { data } = await sb.auth.getSession();
+    user = data.session?.user ?? null;
+  } catch {
+    user = null;
+  }
+  setSyncState(user ? 'saving' : 'signed-out');
+  if (user) await reconcile();
+
+  // Pick up changes made elsewhere when coming back to the app.
+  const refresh = () => { if (user && !document.hidden) reconcile(); };
+  window.addEventListener('focus', refresh);
+  window.addEventListener('online', refresh);
+  document.addEventListener('visibilitychange', refresh);
+}
+
+// Family link (?view=…): show the shared trip read-only, without touching
+// this browser's own saved trip.
+async function startViewOnly() {
+  document.body.classList.add('readonly');
+  const banner = $('#view-banner');
+  banner.hidden = false;
+  let first = true;
+  const load = async () => {
+    try {
+      if (!sb) throw new Error('not configured');
+      const { data, error } = await sb.rpc('get_shared_trip', { token: viewToken });
+      if (error) throw error;
+      if (!data) {
+        banner.textContent = 'This link is no longer active. Ask for a new one.';
+        return;
+      }
+      banner.textContent = '👀 View only — this trip was shared with you.';
+      if (first || !sameTrip(data, state)) {
+        state = migrate(data);
+        render(first);
+        first = false;
+      }
+    } catch (e) {
+      console.warn(e);
+      banner.textContent = "Couldn't load the trip. Check your connection and refresh.";
+    }
+  };
+  await load();
+  const refresh = () => { if (!document.hidden) load(); };
+  window.addEventListener('focus', refresh);
+  document.addEventListener('visibilitychange', refresh);
+}
+
 // ---------- go ----------
 
 render(true);
+if (readOnly) startViewOnly();
+else startSync();
