@@ -35,22 +35,34 @@
     <p id="progress-label" class="muted"></p>
   </section>
 
+  <section id="next-up" class="next-up" hidden></section>
+
   <section class="stats" id="stats"></section>
 
   <main class="layout">
     <div id="map"></div>
     <aside class="timeline">
       <div class="timeline-head">
-        <h2>Itinerary</h2>
-        <div class="filters" role="tablist">
+        <div class="tabs" role="tablist">
+          <button data-tab="itinerary" class="tab active" role="tab">Itinerary</button>
+          <button data-tab="bookings" class="tab" role="tab">Bookings</button>
+        </div>
+        <div class="filters" id="filters">
           <button data-filter="all" class="chip active">All</button>
           <button data-filter="Europe" class="chip">Europe</button>
           <button data-filter="Africa" class="chip">Africa</button>
           <button data-filter="Asia" class="chip">Asia</button>
         </div>
+        <button id="btn-add-booking" class="primary small" hidden>+ Add booking</button>
       </div>
-      <ol id="stop-list"></ol>
-      <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or <strong>⬆︎ Import</strong> a saved plan.</p>
+      <div id="itinerary-panel" class="panel">
+        <ol id="stop-list"></ol>
+        <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or <strong>⬆︎ Import</strong> a saved plan.</p>
+      </div>
+      <div id="bookings-panel" class="panel" hidden>
+        <ol id="booking-list"></ol>
+        <p id="bookings-empty" class="empty">No bookings yet. Add flights, trains and places you're staying, with confirmation numbers, so everything's in one place on travel day.</p>
+      </div>
     </aside>
   </main>
 
@@ -116,6 +128,46 @@
         <button type="button" id="btn-delete" class="danger" hidden>Delete</button>
         <span class="spacer"></span>
         <button type="button" id="btn-cancel" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- Add / edit booking -->
+  <dialog id="booking-dialog">
+    <form id="booking-form" method="dialog">
+      <h2 id="booking-dialog-title">Add booking</h2>
+      <div class="grid2">
+        <label>Type
+          <select name="type">
+            <option value="flight">✈️ Flight</option>
+            <option value="train">🚆 Train</option>
+            <option value="bus">🚌 Bus</option>
+            <option value="ferry">⛴️ Ferry</option>
+            <option value="stay">🏠 Stay</option>
+            <option value="activity">🎟️ Activity / other</option>
+          </select>
+        </label>
+        <label>Stop <select name="stopId"></select></label>
+      </div>
+      <label>Title <input name="title" required placeholder="e.g. Denver → Barcelona, or Barcelona apartment" /></label>
+      <div class="grid2">
+        <label><span id="booking-start-label">Departs</span> <input name="start" type="datetime-local" required /></label>
+        <label><span id="booking-end-label">Arrives</span> <input name="end" type="datetime-local" /></label>
+        <label>Airline / company <input name="provider" placeholder="e.g. United, Renfe, Airbnb" /></label>
+        <label>Confirmation # <input name="confirmation" autocomplete="off" /></label>
+      </div>
+      <label>Details <input name="details" placeholder="e.g. Flight UA 123 · Seat 24A · Terminal B" /></label>
+      <label>Address <input name="address" placeholder="Where you're staying or where it leaves from" /></label>
+      <label>Booking link <input name="link" type="url" placeholder="https://…" /></label>
+      <label>Notes
+        <textarea name="notes" rows="3" placeholder="Check-in code, baggage allowance, host's phone number…"></textarea>
+      </label>
+      <p class="muted small-print">Times are local to the place. Anyone you share the trip with (including the family link) can see bookings.</p>
+      <menu>
+        <button type="button" id="btn-delete-booking" class="danger" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" id="btn-cancel-booking" class="ghost">Cancel</button>
         <button type="submit" class="primary">Save</button>
       </menu>
     </form>
