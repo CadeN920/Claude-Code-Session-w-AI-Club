@@ -3,6 +3,6 @@
 // The anon key is meant to be public: the row-level security rules in
 // supabase/setup.sql make sure each account can only see its own trip.
 window.WANDERLOG_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://hjtizbddmpvijktbsswp.supabase.co',
+  supabaseAnonKey: 'sb_publishable_ZpyFRFLthpNpOZ9O-P9DmQ_AxaHnAV8',
 };
