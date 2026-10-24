@@ -17,6 +17,8 @@
       </div>
     </div>
     <div class="actions">
+      <button id="btn-sync" class="ghost" hidden>☁︎ Sign in to sync</button>
+      <button id="btn-share" class="ghost" hidden>👥 Share</button>
       <button id="btn-settings" class="ghost" title="Trip settings">⚙︎ Trip</button>
       <button id="btn-export" class="ghost" title="Download a backup">⬇︎ Export</button>
       <label class="ghost button" title="Restore from a backup">
@@ -25,6 +27,8 @@
       <button id="btn-add" class="primary">+ Add stop</button>
     </div>
   </header>
+
+  <p id="view-banner" class="view-banner" hidden>Loading trip…</p>
 
   <section class="progress-wrap">
     <div class="progress"><div id="progress-bar"></div></div>
@@ -142,7 +146,75 @@
     </form>
   </dialog>
 
+  <!-- Sign in / sync across devices -->
+  <dialog id="auth-dialog">
+    <form id="auth-form" method="dialog">
+      <h2>Sync across devices</h2>
+      <div id="auth-signed-out">
+        <p class="muted">Sign in to keep your trip the same on your phone and laptop. Only you can see it.</p>
+        <label>Email <input name="email" type="email" autocomplete="email" /></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" /></label>
+        <p id="auth-error" class="error" hidden></p>
+        <menu>
+          <button type="button" id="btn-signup" class="ghost">Create account</button>
+          <span class="spacer"></span>
+          <button type="button" id="btn-auth-cancel" class="ghost">Cancel</button>
+          <button type="submit" class="primary">Sign in</button>
+        </menu>
+      </div>
+      <div id="auth-signed-in" hidden>
+        <p>Signed in as <strong id="auth-email"></strong></p>
+        <p id="auth-status" class="muted"></p>
+        <p class="muted">Signing out removes the trip from this device. It stays saved in your account.</p>
+        <menu>
+          <button type="button" id="btn-signout" class="danger">Sign out</button>
+          <span class="spacer"></span>
+          <button type="button" id="btn-sync-now" class="ghost">Sync now</button>
+          <button type="button" id="btn-auth-close" class="primary">Done</button>
+        </menu>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Share with travel partners and family -->
+  <dialog id="share-dialog">
+    <form method="dialog">
+      <h2>Share your trip</h2>
+      <div id="share-owner">
+        <h3>Travel partners — can edit</h3>
+        <p class="muted">They create an account with this email, then see and edit the same trip.</p>
+        <ul id="editor-list"></ul>
+        <div class="search-row">
+          <input id="editor-email" type="email" placeholder="partner@example.com" />
+          <button type="button" id="btn-add-editor" class="ghost">Add</button>
+        </div>
+
+        <h3>Family link — view only</h3>
+        <p class="muted">Anyone with this link can see the trip, map and notes, but can't change anything. No account needed.</p>
+        <div id="share-link-on" hidden>
+          <div class="search-row">
+            <input id="share-link" readonly />
+            <button type="button" id="btn-copy-link" class="ghost">Copy</button>
+          </div>
+          <menu>
+            <button type="button" id="btn-reset-link" class="ghost">Make a new link</button>
+            <button type="button" id="btn-stop-link" class="danger">Turn off link</button>
+          </menu>
+        </div>
+        <button type="button" id="btn-make-link" class="ghost">Create link</button>
+      </div>
+      <p id="share-not-owner" class="muted" hidden>This trip was shared with you. Only its owner can change who it's shared with.</p>
+      <p id="share-error" class="error" hidden></p>
+      <menu>
+        <span class="spacer"></span>
+        <button type="button" id="btn-share-close" class="primary">Done</button>
+      </menu>
+    </form>
+  </dialog>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
