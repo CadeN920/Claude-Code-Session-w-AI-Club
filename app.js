@@ -40,6 +40,26 @@ function guessContinent(lat, lng) {
   return lng > 29 ? 'Asia' : 'Europe';
 }
 
+// Country flags: from the code saved when a place is picked from search,
+// or looked up by name for stops typed in by hand.
+const COUNTRY_CODES = {
+  albania: 'AL', austria: 'AT', belgium: 'BE', 'bosnia and herzegovina': 'BA', cambodia: 'KH', china: 'CN',
+  croatia: 'HR', czechia: 'CZ', 'czech republic': 'CZ', denmark: 'DK', egypt: 'EG', france: 'FR',
+  germany: 'DE', greece: 'GR', hungary: 'HU', iceland: 'IS', india: 'IN', indonesia: 'ID', ireland: 'IE',
+  israel: 'IL', italy: 'IT', japan: 'JP', jordan: 'JO', laos: 'LA', malaysia: 'MY', mexico: 'MX',
+  montenegro: 'ME', morocco: 'MA', nepal: 'NP', netherlands: 'NL', 'north macedonia': 'MK', norway: 'NO',
+  philippines: 'PH', poland: 'PL', portugal: 'PT', serbia: 'RS', singapore: 'SG', slovakia: 'SK',
+  slovenia: 'SI', 'south korea': 'KR', spain: 'ES', 'sri lanka': 'LK', sweden: 'SE', switzerland: 'CH',
+  taiwan: 'TW', thailand: 'TH', turkey: 'TR', 'türkiye': 'TR', 'united arab emirates': 'AE',
+  'united kingdom': 'GB', 'united states': 'US', vietnam: 'VN', 'viet nam': 'VN',
+};
+function flagFor(s) {
+  const code = COUNTRY_CODES[(s.country || '').trim().toLowerCase()] || (s.countryCode || '').toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return '';
+  const flag = String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0)));
+  return `<span class="flag">${flag}</span>`;
+}
+
 // ---------- state ----------
 
 function defaultState() {
@@ -135,12 +155,16 @@ map.on('click', async (e) => {
   reverseGeocode(latlng.lat, latlng.lng);
 });
 
-const pinIcon = (cls, label) => L.divIcon({
-  className: '',
-  html: `<div class="pin ${cls}">${label}</div>`,
-  iconSize: [26, 26],
-  iconAnchor: [13, 13],
-});
+const pinIcon = (cls, label) => {
+  // Wider pill for combined labels like "2·5".
+  const width = Math.max(26, 16 + String(label).length * 7);
+  return L.divIcon({
+    className: '',
+    html: `<div class="pin ${cls}">${label}</div>`,
+    iconSize: [width, 26],
+    iconAnchor: [width / 2, 13],
+  });
+};
 
 // Draw one leg of the route. Legs that are shorter going across the
 // Pacific (e.g. Asia -> North America) are split at the date line.
@@ -160,10 +184,10 @@ function drawLeg(a, b, style) {
 
 function popupHTML(s) {
   const when = isIdea(s) ? 'Idea — no dates yet' : `${fmtDate(s.arrive)} → ${fmtDate(s.depart)}`;
-  return `
-    <strong>${escapeHTML(s.name)}</strong>, ${escapeHTML(s.country)}<br/>
+  return `<div class="popup-stop">
+    ${flagFor(s)}<strong>${escapeHTML(s.name)}</strong>, ${escapeHTML(s.country)}<br/>
     ${when}${s.status === 'tentative' ? ' · tentative' : ''}
-    ${s.notes ? `<p style="margin:6px 0 0">${escapeHTML(s.notes)}</p>` : ''}`;
+    ${s.notes ? `<p style="margin:6px 0 0">${escapeHTML(s.notes)}</p>` : ''}</div>`;
 }
 
 function renderMap(fit = false) {
@@ -172,11 +196,26 @@ function renderMap(fit = false) {
   const ideas = ideaStops();
   const home = state.trip.home;
 
+  // Stops at the same place (e.g. Madrid twice) share one pin labelled "2·5".
+  const groups = new Map();
   stops.forEach((s, i) => {
-    const icon = pinIcon(`${s.continent} ${stopStatus(s)} ${s.status}`, i + 1);
-    const m = L.marker([s.lat, s.lng], { icon }).addTo(markerLayer).bindPopup(popupHTML(s));
-    m.on('click', () => highlight(s.id));
-    markersById[s.id] = m;
+    const key = `${s.lat.toFixed(3)},${s.lng.toFixed(3)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ s, n: i + 1 });
+  });
+  groups.forEach((group) => {
+    const first = group[0].s;
+    const statuses = group.map(({ s }) => stopStatus(s));
+    const cls = [
+      first.continent,
+      statuses.includes('current') ? 'current' : statuses[0],
+      group.every(({ s }) => s.status === 'booked') ? 'booked' : 'tentative',
+    ].join(' ');
+    const m = L.marker([first.lat, first.lng], { icon: pinIcon(cls, group.map((g) => g.n).join('·')) })
+      .addTo(markerLayer)
+      .bindPopup(group.map(({ s }) => popupHTML(s)).join(''));
+    m.on('click', () => highlight(first.id));
+    group.forEach(({ s }) => { markersById[s.id] = m; });
   });
 
   ideas.forEach((s) => {
@@ -256,9 +295,9 @@ function renderStats() {
     [Math.round(routeKm(stops)).toLocaleString() + ' km', 'Distance'],
     [nights, 'Nights planned'],
     [`${booked} of ${stops.length}`, 'Booked'],
-    [ideaStops().length, 'Ideas to plan'],
-    [fav ? escapeHTML(fav.name) : '—', 'Top rated'],
-  ];
+    ideaStops().length && [ideaStops().length, 'Ideas to plan'],
+    fav && [escapeHTML(fav.name), 'Top rated'],
+  ].filter(Boolean);
   $('#stats').innerHTML = tiles
     .map(([v, l]) => `<div class="stat"><div class="value">${v}</div><div class="label">${l}</div></div>`)
     .join('');
@@ -289,7 +328,7 @@ function stopItem(s, label) {
   li.innerHTML = `
     <div class="num">${label}</div>
     <div>
-      <div class="title">${escapeHTML(s.name)}${badges}</div>
+      <div class="title">${flagFor(s)}${escapeHTML(s.name)}${badges}</div>
       <div class="meta">${escapeHTML(s.country)} · ${when}</div>
       ${bookingChips(s)}
       ${s.rating ? `<div class="rating">${'★'.repeat(s.rating)}${'☆'.repeat(5 - s.rating)}</div>` : ''}
@@ -677,6 +716,7 @@ stopForm.addEventListener('submit', (e) => {
     rating: Number(f.rating.value),
     notes: f.notes.value.trim(),
     photo: f.photo.value.trim(),
+    countryCode: f.countryCode.value,
   };
   const idx = state.stops.findIndex((s) => s.id === stop.id);
   if (idx >= 0) state.stops[idx] = stop;
@@ -715,6 +755,7 @@ function applyPlace(place) {
   const a = place.address || {};
   stopForm.elements.name.value = a.city || a.town || a.village || a.state || place.name || place.display_name.split(',')[0];
   stopForm.elements.country.value = a.country || '';
+  stopForm.elements.countryCode.value = a.country_code || '';
   stopForm.elements.lat.value = Number(place.lat).toFixed(4);
   stopForm.elements.lng.value = Number(place.lon).toFixed(4);
   stopForm.elements.continent.value = guessContinent(Number(place.lat), Number(place.lon));
@@ -733,6 +774,22 @@ $('#btn-search').addEventListener('click', searchPlaces);
 $('#place-search').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); searchPlaces(); }
 });
+
+// ---------- "⋯" menu (trip settings, export, import) ----------
+
+const moreMenu = $('#more-menu');
+function setMenu(open) {
+  moreMenu.hidden = !open;
+  $('#btn-more').setAttribute('aria-expanded', String(open));
+}
+$('#btn-more').addEventListener('click', (e) => {
+  e.stopPropagation();
+  setMenu(moreMenu.hidden);
+});
+moreMenu.addEventListener('click', (e) => { if (e.target.closest('button')) setMenu(false); });
+$('#file-import').addEventListener('change', () => setMenu(false));
+document.addEventListener('click', (e) => { if (!e.target.closest('.more')) setMenu(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setMenu(false); });
 
 // ---------- trip settings ----------
 
@@ -906,7 +963,10 @@ const SYNC_LABELS = {
 function setSyncState(name) {
   const [label, cls] = SYNC_LABELS[name];
   const btn = $('#btn-sync');
-  btn.textContent = label;
+  // Icon stays visible on phones; the words hide on narrow screens.
+  const [icon, ...words] = label.split(' ');
+  btn.innerHTML = `${icon} <span class="label">${words.join(' ')}</span>`;
+  btn.title = label;
   btn.className = `ghost ${cls}`;
   $('#btn-share').hidden = !user;
   $('#auth-status').textContent = {
