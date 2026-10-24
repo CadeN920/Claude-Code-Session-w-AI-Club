@@ -5,35 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Wanderlog</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="logo">✈︎</span>
-      <div>
-        <h1 id="trip-name">My Trip</h1>
-        <p id="trip-dates" class="muted"></p>
-      </div>
+      <span class="wordmark">Wanderlog</span>
     </div>
     <div class="actions">
       <button id="btn-sync" class="ghost" hidden>☁︎ Sign in to sync</button>
-      <button id="btn-share" class="ghost" hidden>👥 Share</button>
-      <button id="btn-settings" class="ghost" title="Trip settings">⚙︎ Trip</button>
-      <button id="btn-export" class="ghost" title="Download a backup">⬇︎ Export</button>
-      <label class="ghost button" title="Restore from a backup">
-        ⬆︎ Import <input id="file-import" type="file" accept="application/json" hidden />
-      </label>
+      <button id="btn-share" class="ghost" title="Share" hidden>👥 <span class="label">Share</span></button>
+      <div class="more">
+        <button id="btn-more" class="ghost icon" title="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
+        <div id="more-menu" class="dropdown" role="menu" hidden>
+          <button id="btn-settings" role="menuitem">⚙︎ Trip settings</button>
+          <button id="btn-export" role="menuitem">⬇︎ Export backup</button>
+          <label class="button" role="menuitem">
+            ⬆︎ Import backup <input id="file-import" type="file" accept="application/json" hidden />
+          </label>
+        </div>
+      </div>
       <button id="btn-add" class="primary">+ Add stop</button>
     </div>
   </header>
 
-  <p id="view-banner" class="view-banner" hidden>Loading trip…</p>
-
-  <section class="progress-wrap">
+  <section class="hero">
+    <h1 id="trip-name">My Trip</h1>
+    <p id="trip-dates" class="muted"></p>
     <div class="progress"><div id="progress-bar"></div></div>
     <p id="progress-label" class="muted"></p>
   </section>
+
+  <p id="view-banner" class="view-banner" hidden>Loading trip…</p>
 
   <section id="next-up" class="next-up" hidden></section>
 
@@ -43,9 +50,12 @@
     <div id="map"></div>
     <aside class="timeline">
       <div class="timeline-head">
-        <div class="tabs" role="tablist">
-          <button data-tab="itinerary" class="tab active" role="tab">Itinerary</button>
-          <button data-tab="bookings" class="tab" role="tab">Bookings</button>
+        <div class="tab-row">
+          <div class="tabs" role="tablist">
+            <button data-tab="itinerary" class="tab active" role="tab">Itinerary</button>
+            <button data-tab="bookings" class="tab" role="tab">Bookings</button>
+          </div>
+          <button id="btn-add-booking" class="primary small" hidden>+ Add booking</button>
         </div>
         <div class="filters" id="filters">
           <button data-filter="all" class="chip active">All</button>
@@ -53,11 +63,10 @@
           <button data-filter="Africa" class="chip">Africa</button>
           <button data-filter="Asia" class="chip">Asia</button>
         </div>
-        <button id="btn-add-booking" class="primary small" hidden>+ Add booking</button>
       </div>
       <div id="itinerary-panel" class="panel">
         <ol id="stop-list"></ol>
-        <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or <strong>⬆︎ Import</strong> a saved plan.</p>
+        <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or import a saved plan from the <strong>⋯</strong> menu.</p>
       </div>
       <div id="bookings-panel" class="panel" hidden>
         <ol id="booking-list"></ol>
@@ -81,7 +90,7 @@
 
       <div class="grid2">
         <label>City / place <input name="name" required /></label>
-        <label>Country <input name="country" required /></label>
+        <label>Country <input name="country" required /><input name="countryCode" type="hidden" /></label>
         <label>Latitude <input name="lat" type="number" step="any" required /></label>
         <label>Longitude <input name="lng" type="number" step="any" required /></label>
         <label>Status
