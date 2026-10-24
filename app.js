@@ -128,7 +128,8 @@ function stopStatus(stop) {
 
 // ---------- map ----------
 
-const map = L.map('map', { worldCopyJump: true }).setView([40, 50], 3);
+// minZoom 2 keeps the world from repeating side by side.
+const map = L.map('map', { worldCopyJump: true, minZoom: 2 }).setView([40, 50], 3);
 // Esri street tiles need no API key. If they fail to load, fall back to OpenStreetMap.
 const esriTiles = L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
@@ -242,11 +243,28 @@ function renderMap(fit = false) {
       : { color: '#6b7280', weight: 2, dashArray: '6 8' });
   }
 
-  const all = [...stops, ...ideas];
-  if (fit && all.length) {
-    map.fitBounds(all.map((s) => [s.lat, s.lng]), { padding: [40, 40], maxZoom: 6 });
+  if (fit) {
+    userMovedMap = false;
+    fitToTrip();
   }
 }
+
+// Zoom the map to show the whole trip. Until the user pans or zooms it
+// themselves, refit whenever the map's size changes (page still laying
+// out, window resized, phone rotated) so it never stays zoomed out.
+let userMovedMap = false;
+function fitToTrip() {
+  const all = [...sortedStops(), ...ideaStops()];
+  if (!all.length) return;
+  map.invalidateSize();
+  map.fitBounds(all.map((s) => [s.lat, s.lng]), { padding: [40, 40], maxZoom: 6 });
+}
+['mousedown', 'wheel', 'touchstart', 'keydown'].forEach((type) =>
+  map.getContainer().addEventListener(type, () => { userMovedMap = true; }, { passive: true }));
+new ResizeObserver(() => {
+  map.invalidateSize();
+  if (!userMovedMap) fitToTrip();
+}).observe(map.getContainer());
 
 function highlight(id) {
   const el = document.querySelector(`[data-id="${id}"]`);
@@ -336,6 +354,7 @@ function stopItem(s, label) {
       ${safePhoto ? `<img src="${escapeHTML(safePhoto)}" alt="${escapeHTML(s.name)}" loading="lazy" />` : ''}
     </div>`;
   li.addEventListener('click', () => {
+    userMovedMap = true;
     map.flyTo([s.lat, s.lng], isIdea(s) ? 5 : 8, { duration: 0.8 });
     markersById[s.id]?.openPopup();
   });
