@@ -47,6 +47,7 @@ function defaultState() {
   return {
     trip: { name: 'My Trip', start: toISO(start), end: toISO(addDays(start, 137)), home: null },
     stops: [],
+    bookings: [],
   };
 }
 
@@ -54,6 +55,7 @@ function defaultState() {
 function migrate(data) {
   data.trip.home ??= null;
   data.stops.forEach((s) => { s.status ??= 'booked'; });
+  data.bookings ??= [];
   return data;
 }
 
@@ -289,6 +291,7 @@ function stopItem(s, label) {
     <div>
       <div class="title">${escapeHTML(s.name)}${badges}</div>
       <div class="meta">${escapeHTML(s.country)} · ${when}</div>
+      ${bookingChips(s)}
       ${s.rating ? `<div class="rating">${'★'.repeat(s.rating)}${'☆'.repeat(5 - s.rating)}</div>` : ''}
       ${s.notes ? `<div class="notes">${escapeHTML(s.notes)}</div>` : ''}
       ${safePhoto ? `<img src="${escapeHTML(safePhoto)}" alt="${escapeHTML(s.name)}" loading="lazy" />` : ''}
@@ -298,6 +301,10 @@ function stopItem(s, label) {
     markersById[s.id]?.openPopup();
   });
   li.addEventListener('dblclick', () => openStopDialog(s));
+  li.querySelectorAll('.bchip').forEach((chip) => chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showBooking(chip.dataset.booking);
+  }));
   $('#stop-list').appendChild(li);
 }
 
@@ -330,9 +337,9 @@ function renderList() {
   }
 }
 
-document.querySelectorAll('.chip').forEach((chip) =>
+document.querySelectorAll('#filters .chip').forEach((chip) =>
   chip.addEventListener('click', () => {
-    document.querySelectorAll('.chip').forEach((c) => c.classList.remove('active'));
+    document.querySelectorAll('#filters .chip').forEach((c) => c.classList.remove('active'));
     chip.classList.add('active');
     filter = chip.dataset.filter;
     renderList();
@@ -341,10 +348,231 @@ document.querySelectorAll('.chip').forEach((chip) =>
 
 function render(fit = false) {
   renderHeader();
+  renderNextUp();
   renderStats();
   renderList();
+  renderBookings();
   renderMap(fit);
 }
+
+// ---------- bookings: flights, trains, stays & confirmations ----------
+
+const BOOKING_TYPES = {
+  flight: { icon: '✈️', start: 'Departs', end: 'Arrives' },
+  train: { icon: '🚆', start: 'Departs', end: 'Arrives' },
+  bus: { icon: '🚌', start: 'Departs', end: 'Arrives' },
+  ferry: { icon: '⛴️', start: 'Departs', end: 'Arrives' },
+  stay: { icon: '🏠', start: 'Check-in', end: 'Check-out' },
+  activity: { icon: '🎟️', start: 'Starts', end: 'Ends' },
+};
+const bookingIcon = (b) => BOOKING_TYPES[b.type]?.icon ?? '🎟️';
+
+// Booking times are stored as typed ("2027-01-06T17:30"), in the local time
+// of the place, and shown the same way.
+function nowLocal() {
+  const d = new Date();
+  return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function fmtDateTime(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ` +
+    d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+const sortedBookings = () => [...state.bookings].sort((a, b) => a.start.localeCompare(b.start));
+const bookingsForStop = (s) => sortedBookings().filter((b) => b.stopId === s.id);
+
+function bookingChips(s) {
+  const list = bookingsForStop(s);
+  if (!list.length) return '';
+  return `<div class="booking-chips">${list.map((b) =>
+    `<button type="button" class="bchip" data-booking="${b.id}">${bookingIcon(b)} ${escapeHTML(b.title)}</button>`
+  ).join('')}</div>`;
+}
+
+// Pick the stop a booking belongs to: transport goes with the stop you arrive
+// at (overnight flights land the next day); stays and activities with the
+// stop whose dates include them.
+function autoStopId(type, start, end) {
+  const transport = !['stay', 'activity'].includes(type);
+  const day = ((transport && end) || start).slice(0, 10);
+  const stops = sortedStops();
+  const match = (transport && stops.find((s) => s.arrive === day)) ||
+    stops.find((s) => s.arrive <= day && day < s.depart);
+  return match?.id ?? '';
+}
+
+function renderNextUp() {
+  const now = nowLocal();
+  const list = sortedBookings();
+  const staying = list.find((b) => b.type === 'stay' && b.start <= now && now < (b.end || b.start));
+  const next = list.find((b) => b.start > now);
+  const card = (label, b, when) => `
+    <button type="button" class="next-card" data-booking="${b.id}">
+      <span class="next-label">${label}</span>
+      <span class="next-title">${bookingIcon(b)} ${escapeHTML(b.title)}</span>
+      <span class="muted">${when}${b.confirmation ? ` · Conf. <span class="conf">${escapeHTML(b.confirmation)}</span>` : ''}</span>
+    </button>`;
+  const parts = [];
+  if (staying) parts.push(card('Staying at', staying, `until ${fmtDateTime(staying.end)}`));
+  if (next) {
+    const days = daysBetween(toISO(today()), next.start.slice(0, 10));
+    const soon = days <= 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
+    parts.push(card('Next up', next, `${fmtDateTime(next.start)} · ${soon}`));
+  }
+  const el = $('#next-up');
+  el.innerHTML = parts.join('');
+  el.hidden = !parts.length;
+  el.querySelectorAll('.next-card').forEach((c) =>
+    c.addEventListener('click', () => showBooking(c.dataset.booking)));
+}
+
+function bookingItem(b) {
+  const stop = state.stops.find((s) => s.id === b.stopId);
+  const link = /^https?:\/\//i.test(b.link || '') ? b.link : '';
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(b.address || '')}`;
+  const li = document.createElement('li');
+  li.className = `booking${(b.end || b.start) < nowLocal() ? ' past' : ''}`;
+  li.dataset.id = b.id;
+  li.innerHTML = `
+    <div class="b-icon">${bookingIcon(b)}</div>
+    <div>
+      <div class="title">${escapeHTML(b.title)}</div>
+      <div class="meta">${fmtDateTime(b.start)}${b.end ? ` → ${fmtDateTime(b.end)}` : ''}</div>
+      ${b.provider || b.confirmation ? `<div class="meta">
+        ${escapeHTML(b.provider || '')}${b.provider && b.confirmation ? ' · ' : ''}
+        ${b.confirmation ? `Conf. <span class="conf">${escapeHTML(b.confirmation)}</span>
+          <button type="button" class="copy">Copy</button>` : ''}
+      </div>` : ''}
+      ${b.details ? `<div class="notes">${escapeHTML(b.details)}</div>` : ''}
+      ${b.address ? `<div class="notes"><a href="${mapsUrl}" target="_blank" rel="noopener">📍 ${escapeHTML(b.address)}</a></div>` : ''}
+      ${link ? `<div class="notes"><a href="${escapeHTML(link)}" target="_blank" rel="noopener">Open booking ↗</a></div>` : ''}
+      ${b.notes ? `<div class="notes">${escapeHTML(b.notes)}</div>` : ''}
+      ${stop ? `<div class="meta">For: ${escapeHTML(stop.name)}</div>` : ''}
+    </div>`;
+  li.querySelector('.copy')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(b.confirmation);
+      e.target.textContent = 'Copied!';
+      setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
+    } catch { /* clipboard blocked: the number is visible to copy by hand */ }
+  });
+  li.querySelectorAll('a').forEach((a) => a.addEventListener('click', (e) => e.stopPropagation()));
+  li.addEventListener('click', () => openBookingDialog(b));
+  return li;
+}
+
+function renderBookings() {
+  const list = $('#booking-list');
+  list.innerHTML = '';
+  const all = sortedBookings();
+  $('#bookings-empty').hidden = all.length > 0;
+  const now = nowLocal();
+  const upcoming = all.filter((b) => (b.end || b.start) >= now);
+  const past = all.filter((b) => (b.end || b.start) < now);
+  const head = (text) => {
+    const li = document.createElement('li');
+    li.className = 'section-head';
+    li.textContent = text;
+    list.appendChild(li);
+  };
+  if (upcoming.length) head(`Upcoming (${upcoming.length})`);
+  upcoming.forEach((b) => list.appendChild(bookingItem(b)));
+  if (past.length) head(`Past (${past.length})`);
+  past.forEach((b) => list.appendChild(bookingItem(b)));
+}
+
+// Tabs in the side panel.
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  $('#itinerary-panel').hidden = name !== 'itinerary';
+  $('#bookings-panel').hidden = name !== 'bookings';
+  $('#filters').hidden = name !== 'itinerary';
+  $('#btn-add-booking').hidden = name !== 'bookings' || readOnly;
+}
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
+
+function showBooking(id) {
+  showTab('bookings');
+  const el = document.querySelector(`#booking-list [data-id="${id}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1500);
+}
+
+// ---------- add / edit booking dialog ----------
+
+const bookingDialog = $('#booking-dialog');
+const bookingForm = $('#booking-form');
+let editingBookingId = null;
+
+function syncBookingLabels() {
+  const t = BOOKING_TYPES[bookingForm.elements.type.value];
+  $('#booking-start-label').textContent = t.start;
+  $('#booking-end-label').textContent = t.end;
+}
+bookingForm.elements.type.addEventListener('change', syncBookingLabels);
+
+function openBookingDialog(b) {
+  if (readOnly) return;
+  editingBookingId = b?.id ?? null;
+  bookingForm.reset();
+  $('#booking-dialog-title').textContent = b ? 'Edit booking' : 'Add booking';
+  $('#btn-delete-booking').hidden = !b;
+  bookingForm.elements.stopId.innerHTML =
+    '<option value="">Auto (match by date)</option>' +
+    sortedStops().map((s, i) =>
+      `<option value="${s.id}">${i + 1}. ${escapeHTML(s.name)} (${fmtDate(s.arrive)} – ${fmtDate(s.depart)})</option>`
+    ).join('');
+  const data = b ?? { type: 'flight' };
+  for (const [k, v] of Object.entries(data)) {
+    if (bookingForm.elements[k]) bookingForm.elements[k].value = v ?? '';
+  }
+  syncBookingLabels();
+  bookingDialog.showModal();
+}
+
+$('#btn-add-booking').addEventListener('click', () => openBookingDialog(null));
+$('#btn-cancel-booking').addEventListener('click', () => bookingDialog.close());
+
+$('#btn-delete-booking').addEventListener('click', () => {
+  if (!confirm('Delete this booking?')) return;
+  state.bookings = state.bookings.filter((b) => b.id !== editingBookingId);
+  save();
+  bookingDialog.close();
+  render();
+});
+
+bookingForm.addEventListener('submit', (e) => {
+  const f = bookingForm.elements;
+  if (f.end.value && f.end.value < f.start.value) {
+    e.preventDefault();
+    alert(`${$('#booking-end-label').textContent} must be after ${$('#booking-start-label').textContent.toLowerCase()}.`);
+    return;
+  }
+  const field = (k) => f[k].value.trim();
+  const booking = {
+    id: editingBookingId ?? uid(),
+    type: f.type.value,
+    title: field('title'),
+    start: f.start.value,
+    end: f.end.value,
+    provider: field('provider'),
+    confirmation: field('confirmation'),
+    details: field('details'),
+    address: field('address'),
+    link: field('link'),
+    notes: field('notes'),
+    stopId: f.stopId.value || autoStopId(f.type.value, f.start.value, f.end.value),
+  };
+  const idx = state.bookings.findIndex((b) => b.id === booking.id);
+  if (idx >= 0) state.bookings[idx] = booking;
+  else state.bookings.push(booking);
+  save();
+  render();
+});
 
 // ---------- add / edit stop dialog ----------
 
@@ -584,9 +812,7 @@ function sampleTrip() {
     cursor = addDays(cursor, nights);
     return { id: uid(), name, country, lat, lng, arrive, depart: toISO(cursor), continent, transport, status: 'booked', rating: 0, notes: '', photo: '', ...extra };
   };
-  return {
-    trip: { name: 'Sample: Europe & Asia', start: toISO(start), end: toISO(addDays(start, 137)), home: null },
-    stops: [
+  const stops = [
       leg('Lisbon', 'Portugal', 38.7223, -9.1393, 5, 'Europe', '✈️ Plane', { rating: 5, notes: 'Pastéis de nata every morning. Sunset at Miradouro da Senhora do Monte.' }),
       leg('Barcelona', 'Spain', 41.3874, 2.1686, 5, 'Europe', '✈️ Plane', { rating: 4, notes: 'Sagrada Família blew my mind.' }),
       leg('Paris', 'France', 48.8566, 2.3522, 4, 'Europe', '🚆 Train', { rating: 4 }),
@@ -605,6 +831,24 @@ function sampleTrip() {
       leg('Seoul', 'South Korea', 37.5665, 126.978, 7, 'Asia', '✈️ Plane'),
       leg('Tokyo', 'Japan', 35.6762, 139.6503, 8, 'Asia', '✈️ Plane'),
       leg('Kyoto', 'Japan', 35.0116, 135.7681, 5, 'Asia', '🚆 Train'),
+  ];
+  const istanbul = stops[8];
+  const delhi = stops[9];
+  const booking = (type, title, startTime, endTime, stop, extra) => ({
+    id: uid(), type, title, start: startTime, end: endTime, stopId: stop.id,
+    provider: '', confirmation: '', details: '', address: '', link: '', notes: '', ...extra,
+  });
+  return {
+    trip: { name: 'Sample: Europe & Asia', start: toISO(start), end: toISO(addDays(start, 137)), home: null },
+    stops,
+    bookings: [
+      booking('stay', 'Hostel in Sultanahmet', `${istanbul.arrive}T15:00`, `${istanbul.depart}T11:00`, istanbul, {
+        provider: 'Hostelworld', confirmation: 'HW-48213', address: 'Sultanahmet, Istanbul',
+      }),
+      booking('flight', 'Istanbul → Delhi', `${istanbul.depart}T14:10`, `${delhi.arrive}T22:55`, delhi, {
+        provider: 'Turkish Airlines', confirmation: 'TK7Q2P', details: 'TK 716 · Seat 31A · Istanbul Airport (IST)',
+        notes: '1 checked bag included. Online check-in opens 24h before.',
+      }),
     ],
   };
 }

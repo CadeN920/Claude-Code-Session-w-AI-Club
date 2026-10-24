@@ -11,6 +11,7 @@ A no-build web app for tracking a 4.5-month trip through Europe and Asia.
 - **Booked, tentative, or idea:** ideas are places you're considering with no dates yet (shown as dashed "?" pins); double-click one to schedule it
 - **Home city** (optional, under ⚙︎ Trip): the route starts and ends there, and those flights count toward distance
 - **Regions:** Europe, Africa, Asia, with filters
+- **Bookings wallet:** flights, trains, buses, ferries, stays and activities with times, confirmation numbers (one-tap copy), addresses (open in Maps), links and notes. A **Staying at / Next up** card shows where you're sleeping and your next departure; each stop shows its bookings as chips
 - **Sample trip** under ⚙︎ Trip → "Load sample trip" shows a full example
 
 Your own plan isn't stored in this repo: keep it as an Export file and use ⬆︎ Import to load it.
