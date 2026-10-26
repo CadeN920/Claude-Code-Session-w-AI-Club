@@ -33,47 +33,125 @@
     </div>
   </header>
 
-  <section class="hero">
-    <h1 id="trip-name">My Trip</h1>
-    <p id="trip-dates" class="muted"></p>
-    <div class="progress"><div id="progress-bar"></div></div>
-    <p id="progress-label" class="muted"></p>
-  </section>
+  <nav class="nav" id="nav" aria-label="Sections">
+    <button data-view="home" class="nav-item active"><span class="nav-icon">🏠</span><span>Home</span></button>
+    <button data-view="trip" class="nav-item"><span class="nav-icon">🗺️</span><span>Trip</span></button>
+    <button data-view="bookings" class="nav-item"><span class="nav-icon">🎫</span><span>Bookings</span></button>
+    <button data-view="todos" class="nav-item"><span class="nav-icon">✅</span><span>To-dos</span><span id="todo-count" class="nav-count" hidden></span></button>
+    <button data-view="profile" class="nav-item"><span class="nav-icon">👤</span><span>Profile</span></button>
+  </nav>
 
   <p id="view-banner" class="view-banner" hidden>Loading trip…</p>
 
-  <section id="next-up" class="next-up" hidden></section>
+  <!-- Home: the at-a-glance dashboard -->
+  <section id="view-home" class="view">
+    <section class="hero">
+      <h1 id="trip-name">My Trip</h1>
+      <p id="trip-dates" class="muted"></p>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <p id="progress-label" class="muted"></p>
+    </section>
 
-  <section class="stats" id="stats"></section>
+    <button id="quiz-banner" class="quiz-banner" data-goto="profile" hidden>
+      <span class="quiz-emoji">✨</span>
+      <span><strong>Personalize your trip.</strong> Take the 1-minute travel quiz so recommendations fit how you like to travel.</span>
+      <span class="quiz-arrow">→</span>
+    </button>
 
-  <main class="layout">
-    <div id="map"></div>
-    <aside class="timeline">
-      <div class="timeline-head">
-        <div class="tab-row">
-          <div class="tabs" role="tablist">
-            <button data-tab="itinerary" class="tab active" role="tab">Itinerary</button>
-            <button data-tab="bookings" class="tab" role="tab">Bookings</button>
+    <section id="next-up" class="next-up" hidden></section>
+
+    <div class="home-grid">
+      <section class="card">
+        <div class="card-head">
+          <h2>Needs attention</h2>
+          <button class="link" data-goto="todos">All to-dos →</button>
+        </div>
+        <ul id="attention-list" class="task-list"></ul>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Coming up</h2>
+          <button class="link" data-goto="trip">Open map →</button>
+        </div>
+        <ul id="upcoming-list" class="upcoming-list"></ul>
+      </section>
+    </div>
+
+    <section class="stats" id="stats"></section>
+  </section>
+
+  <!-- Trip: map + itinerary -->
+  <section id="view-trip" class="view" hidden>
+    <main class="layout">
+      <div id="map"></div>
+      <aside class="timeline">
+        <div class="timeline-head">
+          <h2>Itinerary</h2>
+          <div class="filters" id="filters">
+            <button data-filter="all" class="chip active">All</button>
+            <button data-filter="Europe" class="chip">Europe</button>
+            <button data-filter="Africa" class="chip">Africa</button>
+            <button data-filter="Asia" class="chip">Asia</button>
           </div>
-          <button id="btn-add-booking" class="primary small" hidden>+ Add booking</button>
         </div>
-        <div class="filters" id="filters">
-          <button data-filter="all" class="chip active">All</button>
-          <button data-filter="Europe" class="chip">Europe</button>
-          <button data-filter="Africa" class="chip">Africa</button>
-          <button data-filter="Asia" class="chip">Asia</button>
+        <div id="itinerary-panel" class="panel">
+          <ol id="stop-list"></ol>
+          <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or import a saved plan from the <strong>⋯</strong> menu.</p>
         </div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- Bookings -->
+  <section id="view-bookings" class="view page" hidden>
+    <div class="page-head">
+      <div>
+        <h2>Bookings</h2>
+        <p class="muted">Flights, trains and places to stay, with everything you need on travel day.</p>
       </div>
-      <div id="itinerary-panel" class="panel">
-        <ol id="stop-list"></ol>
-        <p id="empty" class="empty">No stops yet. Hit <strong>+ Add stop</strong>, click the map, or import a saved plan from the <strong>⋯</strong> menu.</p>
+      <button id="btn-add-booking" class="primary">+ Add booking</button>
+    </div>
+    <div class="card flush">
+      <ol id="booking-list"></ol>
+      <p id="bookings-empty" class="empty">No bookings yet. Add flights, trains and places you're staying, with confirmation numbers, so everything's in one place on travel day.</p>
+    </div>
+  </section>
+
+  <!-- To-dos -->
+  <section id="view-todos" class="view page" hidden>
+    <div class="page-head">
+      <div>
+        <h2>To-dos</h2>
+        <p class="muted">Reminders built from your trip, plus your own tasks.</p>
       </div>
-      <div id="bookings-panel" class="panel" hidden>
-        <ol id="booking-list"></ol>
-        <p id="bookings-empty" class="empty">No bookings yet. Add flights, trains and places you're staying, with confirmation numbers, so everything's in one place on travel day.</p>
+    </div>
+    <form id="todo-form" class="card todo-add">
+      <input name="text" placeholder="Add a task, e.g. Buy a universal adapter" required />
+      <input name="due" type="date" title="Due date (optional)" />
+      <button type="submit" class="primary">Add</button>
+    </form>
+    <section id="schengen-card" class="card" hidden></section>
+    <div class="card flush">
+      <ul id="todo-list" class="task-list"></ul>
+      <p id="todos-empty" class="empty" hidden>You're all caught up. 🎉</p>
+    </div>
+    <details id="done-section" class="done-section" hidden>
+      <summary id="done-summary">Done</summary>
+      <ul id="done-list" class="task-list"></ul>
+    </details>
+  </section>
+
+  <!-- Profile: travel preferences -->
+  <section id="view-profile" class="view page" hidden>
+    <div class="page-head">
+      <div>
+        <h2>Your travel profile</h2>
+        <p class="muted">How you like to travel. This will shape your recommendations. Changes save automatically.</p>
       </div>
-    </aside>
-  </main>
+      <span id="profile-saved" class="muted saved-note" hidden>Saved ✓</span>
+    </div>
+    <form id="profile-form" class="card profile-form"></form>
+  </section>
 
   <!-- Add / edit stop -->
   <dialog id="stop-dialog">
