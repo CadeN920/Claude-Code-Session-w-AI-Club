@@ -3,6 +3,12 @@
 A no-build web app for tracking a 4.5-month trip through Europe and Asia.
 
 ## Features
+The app is organized into tabs: **🏠 Home · 🗺️ Trip · 🎫 Bookings · ✅ To-dos · 👤 Profile** (along the top on a laptop, along the bottom on a phone).
+
+- **Home:** trip countdown, Next up, what needs attention, the next few stops, and key stats
+- **To-dos:** reminders worked out from your trip (book transport and stays, online check-in, entry and visa rules, pre-trip checklist), grouped by month, plus your own tasks with due dates; suggested ones can be ticked off or dismissed
+- **Schengen 90/180 counter:** your busiest 180-day window in the Schengen area, for US passport holders
+- **Travel profile:** a quick quiz (early bird or night owl, interests, food, pace, budget, goals) that will drive personalized recommendations
 - **Interactive map** (Leaflet + OpenStreetMap) with numbered stops, a solid line for where you've been and a dashed line for what's ahead
 - **Itinerary timeline** with dates, nights, transport, star ratings, journal notes and photos; "You are here" badge on the current stop
 - **Trip progress bar** and stats: stops, countries, km traveled, nights, booked count, ideas to plan, top-rated stop

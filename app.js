@@ -53,9 +53,13 @@ const COUNTRY_CODES = {
   taiwan: 'TW', thailand: 'TH', turkey: 'TR', 'türkiye': 'TR', 'united arab emirates': 'AE',
   'united kingdom': 'GB', 'united states': 'US', vietnam: 'VN', 'viet nam': 'VN',
 };
-function flagFor(s) {
+function countryCodeOf(s) {
   const code = COUNTRY_CODES[(s.country || '').trim().toLowerCase()] || (s.countryCode || '').toUpperCase();
-  if (!/^[A-Z]{2}$/.test(code)) return '';
+  return /^[A-Z]{2}$/.test(code) ? code : '';
+}
+function flagFor(s) {
+  const code = countryCodeOf(s);
+  if (!code) return '';
   const flag = String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0)));
   return `<span class="flag">${flag}</span>`;
 }
@@ -68,6 +72,9 @@ function defaultState() {
     trip: { name: 'My Trip', start: toISO(start), end: toISO(addDays(start, 137)), home: null },
     stops: [],
     bookings: [],
+    todos: [],
+    todoState: {},
+    profile: {},
   };
 }
 
@@ -76,6 +83,9 @@ function migrate(data) {
   data.trip.home ??= null;
   data.stops.forEach((s) => { s.status ??= 'booked'; });
   data.bookings ??= [];
+  data.todos ??= [];        // your own tasks
+  data.todoState ??= {};    // suggested reminders you've ticked off or dismissed
+  data.profile ??= {};      // travel-preferences quiz answers
   return data;
 }
 
@@ -314,6 +324,7 @@ function renderStats() {
     [nights, 'Nights planned'],
     [`${booked} of ${stops.length}`, 'Booked'],
     ideaStops().length && [ideaStops().length, 'Ideas to plan'],
+    schengenStatus() && [`${schengenStatus().max} / 90`, 'Schengen days'],
     fav && [escapeHTML(fav.name), 'Top rated'],
   ].filter(Boolean);
   $('#stats').innerHTML = tiles
@@ -410,6 +421,9 @@ function render(fit = false) {
   renderStats();
   renderList();
   renderBookings();
+  renderTodos();
+  renderHome();
+  renderProfile();
   renderMap(fit);
 }
 
@@ -541,24 +555,405 @@ function renderBookings() {
   past.forEach((b) => list.appendChild(bookingItem(b)));
 }
 
-// Tabs in the side panel.
-function showTab(name) {
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  $('#itinerary-panel').hidden = name !== 'itinerary';
-  $('#bookings-panel').hidden = name !== 'bookings';
-  $('#filters').hidden = name !== 'itinerary';
-  $('#btn-add-booking').hidden = name !== 'bookings' || readOnly;
+// ---------- views: Home · Trip · Bookings · To-dos · Profile ----------
+
+const VIEWS = ['home', 'trip', 'bookings', 'todos', 'profile'];
+const PRIVATE_VIEWS = ['todos', 'profile']; // not shown on the family link
+
+function showView(name) {
+  if (!VIEWS.includes(name) || (readOnly && PRIVATE_VIEWS.includes(name))) name = 'home';
+  VIEWS.forEach((v) => { $(`#view-${v}`).hidden = v !== name; });
+  document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  window.scrollTo({ top: 0 });
 }
-document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
+// The URL hash remembers the tab (#trip, #todos, …) so back/forward and refresh work.
+function goTo(name) {
+  if (location.hash === `#${name}`) showView(name);
+  else location.hash = name;
+}
+window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => goTo(b.dataset.view)));
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('[data-goto]');
+  if (link) goTo(link.dataset.goto);
+});
 
 function showBooking(id) {
-  showTab('bookings');
+  goTo('bookings');
   const el = document.querySelector(`#booking-list [data-id="${id}"]`);
   if (!el) return;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.classList.add('flash');
   setTimeout(() => el.classList.remove('flash'), 1500);
 }
+
+function showStop(id) {
+  const s = state.stops.find((x) => x.id === id);
+  if (!s) return;
+  goTo('trip');
+  userMovedMap = true;
+  // Wait a frame so the map has its size after the Trip tab appears.
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    map.setView([s.lat, s.lng], isIdea(s) ? 5 : 8);
+    markersById[s.id]?.openPopup();
+    highlight(s.id);
+  });
+}
+
+// ---------- to-dos: reminders built from the trip, plus your own ----------
+
+// Schengen area: 90 days in any 180 for visitors such as US passport holders.
+const SCHENGEN = new Set(['AT', 'BE', 'BG', 'HR', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IS', 'IT',
+  'LV', 'LI', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE', 'CH']);
+
+function schengenStatus() {
+  const days = new Set();
+  const countries = new Set();
+  sortedStops().forEach((s) => {
+    if (!SCHENGEN.has(countryCodeOf(s))) return;
+    countries.add(s.country);
+    for (let d = parseDate(s.arrive); toISO(d) <= s.depart; d = addDays(d, 1)) days.add(toISO(d));
+  });
+  if (!days.size) return null;
+  const sorted = [...days].sort();
+  let max = 0;
+  let worstEnd = sorted[0];
+  for (const end of sorted) {
+    const from = toISO(addDays(parseDate(end), -179));
+    const count = sorted.filter((d) => d >= from && d <= end).length;
+    if (count > max) { max = count; worstEnd = end; }
+  }
+  return { max, worstEnd, countries: [...countries] };
+}
+
+const isTransport = (b) => ['flight', 'train', 'bus', 'ferry'].includes(b.type);
+const dayOf = (dt) => (dt || '').slice(0, 10);
+const daysBefore = (day, n) => toISO(addDays(parseDate(day), -n));
+
+// Reminders worked out from the stops and bookings. Ids are stable so
+// ticking one off (or dismissing it) is remembered.
+function autoTodos() {
+  const list = [];
+  const add = (key, text, due, extra = {}) => list.push({ id: `auto:${key}`, auto: true, text, due, ...extra });
+  const t = toISO(today());
+  const stops = sortedStops();
+  const bookings = sortedBookings();
+  const home = state.trip.home;
+
+  // Before you go
+  if (t < state.trip.start) {
+    [
+      ['passport', 'Check your passport is valid for 6+ months after you get home', 90],
+      ['insurance', 'Get travel insurance', 30],
+      ['phone', 'Sort out an international phone plan or eSIM', 14],
+      ['bank', "Tell your bank and card companies you'll be abroad", 7],
+      ['docs', 'Save copies of your passport and bookings where you can reach them offline', 7],
+    ].forEach(([key, text, days]) => add(`pre:${key}`, text, daysBefore(state.trip.start, days)));
+  }
+
+  // Entry rules: one reminder for the Schengen area, one per other country.
+  const seen = new Set();
+  stops.filter((s) => s.arrive >= t).forEach((s) => {
+    const code = countryCodeOf(s) || s.country;
+    const key = SCHENGEN.has(code) ? 'schengen' : code;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (key === 'schengen') {
+      add('entry:schengen', 'Check Schengen entry rules (passport, 90-day limit, ETIAS)', daysBefore(s.arrive, 45), {
+        hint: 'Covers most of your Europe stops. Official info: travel-europe.europa.eu',
+      });
+    } else {
+      add(`entry:${key}`, `Check entry & visa rules for ${s.country}`, daysBefore(s.arrive, 45), {
+        hint: 'Look up the official government site: visa or e-visa, passport validity, arrival forms.',
+        stopId: s.id,
+      });
+    }
+  });
+
+  // Getting to each stop, and a place to sleep there.
+  stops.filter((s) => s.arrive >= t).forEach((s) => {
+    const i = stops.indexOf(s);
+    const from = i > 0 ? stops[i - 1].name : home?.name;
+    const hasTransport = bookings.some((b) => isTransport(b) && (b.stopId === s.id || dayOf(b.end || b.start) === s.arrive));
+    if (!hasTransport && from) {
+      const how = (s.transport || '').replace(/^\S+\s/, '').toLowerCase() || 'travel';
+      add(`transport:${s.id}`, `Book ${how} to ${s.name}`, daysBefore(s.arrive, 30), {
+        hint: `From ${from} · ${fmtDate(s.arrive)}`, stopId: s.id,
+      });
+    }
+    const nights = daysBetween(s.arrive, s.depart);
+    const hasStay = bookings.some((b) => b.type === 'stay' &&
+      (b.stopId === s.id || (dayOf(b.start) <= s.arrive && s.arrive < dayOf(b.end || b.start))));
+    if (nights > 0 && !hasStay) {
+      add(`stay:${s.id}`, `Book a place to stay in ${s.name}`, daysBefore(s.arrive, 30), {
+        hint: `${fmtDate(s.arrive)} – ${fmtDate(s.depart)} · ${nights} night${nights === 1 ? '' : 's'}`, stopId: s.id,
+      });
+    }
+  });
+
+  // Getting home.
+  const last = stops.at(-1);
+  if (home && last && last.depart >= t &&
+      !bookings.some((b) => isTransport(b) && dayOf(b.start) >= last.depart)) {
+    add('home', `Book your flight home to ${home.name}`, daysBefore(last.depart, 60), {
+      hint: `From ${last.name} · ${fmtDate(last.depart)}`,
+    });
+  }
+
+  // Booked things: online check-in and missing details.
+  bookings.filter((b) => dayOf(b.start) >= t).forEach((b) => {
+    if (b.type === 'flight') {
+      add(`checkin:${b.id}`, `Check in online: ${b.title}`, daysBefore(dayOf(b.start), 1), {
+        hint: 'Online check-in usually opens 24 hours before departure.', bookingId: b.id,
+      });
+    }
+    const missing = [b.type === 'stay' && !b.address && 'address', !b.confirmation && 'confirmation code'].filter(Boolean);
+    if (missing.length) {
+      add(`details:${b.id}`, `Add the ${missing.join(' and ')} for ${b.title}`, daysBefore(dayOf(b.start), 14), { bookingId: b.id });
+    }
+  });
+
+  return list;
+}
+
+function allTodos() {
+  const marks = state.todoState;
+  const auto = autoTodos()
+    .filter((x) => marks[x.id] !== 'dismissed')
+    .map((x) => ({ ...x, done: marks[x.id] === 'done' }));
+  return [...auto, ...state.todos];
+}
+const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999');
+const openTodos = () => allTodos().filter((x) => !x.done).sort(byDue);
+
+function dueInfo(due) {
+  if (!due) return { text: '', cls: '' };
+  const days = daysBetween(toISO(today()), due);
+  if (days < 0) return { text: `Overdue by ${-days} day${days === -1 ? '' : 's'}`, cls: 'overdue' };
+  if (days === 0) return { text: 'Due today', cls: 'soon' };
+  if (days <= 7) return { text: `Due in ${days} day${days === 1 ? '' : 's'}`, cls: 'soon' };
+  return { text: `Due ${fmtDate(due)}`, cls: '' };
+}
+
+function todoItem(x, { compact = false } = {}) {
+  const due = dueInfo(x.due);
+  const li = document.createElement('li');
+  li.className = `task ${x.done ? 'done' : due.cls}`;
+  li.innerHTML = `
+    <input type="checkbox" ${x.done ? 'checked' : ''} aria-label="Done" ${readOnly ? 'disabled' : ''} />
+    <div class="task-body">
+      <div class="task-text">${escapeHTML(x.text)}</div>
+      <div class="task-meta">${[due.text, !compact && x.hint && escapeHTML(x.hint), x.auto && !compact && 'Suggested']
+        .filter(Boolean).join(' · ')}</div>
+    </div>
+    ${compact || readOnly ? '' : `<button type="button" class="task-x" title="${x.auto ? 'Dismiss' : 'Delete'}">×</button>`}`;
+  li.querySelector('input').addEventListener('change', (e) => setTodoDone(x, e.target.checked));
+  li.querySelector('.task-x')?.addEventListener('click', () => removeTodo(x));
+  li.querySelector('.task-body').addEventListener('click', () => {
+    if (x.bookingId) showBooking(x.bookingId);
+    else if (x.stopId) showStop(x.stopId);
+  });
+  if (x.bookingId || x.stopId) li.querySelector('.task-body').classList.add('clickable');
+  return li;
+}
+
+function setTodoDone(x, done) {
+  if (x.auto) {
+    if (done) state.todoState[x.id] = 'done';
+    else delete state.todoState[x.id];
+  } else {
+    state.todos = state.todos.map((t) => (t.id === x.id ? { ...t, done } : t));
+  }
+  save();
+  render();
+}
+
+function removeTodo(x) {
+  if (x.auto) state.todoState[x.id] = 'dismissed';
+  else state.todos = state.todos.filter((t) => t.id !== x.id);
+  save();
+  render();
+}
+
+$('#todo-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  const text = f.text.value.trim();
+  if (!text) return;
+  state.todos.push({ id: uid(), text, due: f.due.value, done: false });
+  e.target.reset();
+  save();
+  render();
+});
+
+function renderTodos() {
+  const open = openTodos();
+  const done = allTodos().filter((x) => x.done);
+  const list = $('#todo-list');
+  list.innerHTML = '';
+  // Group under "Overdue", then one heading per month, so it reads like a calendar.
+  const t = toISO(today());
+  const groupOf = (x) => !x.due ? 'No date'
+    : x.due < t ? 'Overdue'
+      : parseDate(x.due).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  let current = null;
+  open.forEach((x) => {
+    const group = groupOf(x);
+    if (group !== current) {
+      current = group;
+      const count = open.filter((y) => groupOf(y) === group).length;
+      const head = document.createElement('li');
+      head.className = `section-head${group === 'Overdue' ? ' overdue' : ''}`;
+      head.textContent = `${group} · ${count}`;
+      list.appendChild(head);
+    }
+    list.appendChild(todoItem(x));
+  });
+  $('#todos-empty').hidden = open.length > 0;
+  $('#done-section').hidden = !done.length;
+  $('#done-summary').textContent = `Done (${done.length})`;
+  $('#done-list').innerHTML = '';
+  done.forEach((x) => $('#done-list').appendChild(todoItem(x)));
+
+  // Badge on the tab: things overdue or due within two weeks.
+  const urgent = open.filter((x) => x.due && daysBetween(toISO(today()), x.due) <= 14).length;
+  $('#todo-count').textContent = urgent;
+  $('#todo-count').hidden = !urgent || readOnly;
+
+  const sch = schengenStatus();
+  const card = $('#schengen-card');
+  card.hidden = !sch;
+  if (sch) {
+    const pct = Math.min(100, (sch.max / 90) * 100);
+    const level = sch.max > 90 ? 'over' : sch.max > 80 ? 'close' : 'ok';
+    card.innerHTML = `
+      <div class="card-head"><h2>Schengen 90-day limit</h2><span class="pill ${level}">${sch.max} / 90 days</span></div>
+      <div class="meter ${level}"><div style="width:${pct}%"></div></div>
+      <p class="muted">${sch.max > 90
+        ? `Your plan has you in the Schengen area for ${sch.max} days in one 180-day window. US passport holders can stay 90. Shorten some Schengen stops or move them outside the area.`
+        : `Your busiest 180-day window (ending ${fmtDate(sch.worstEnd)}) has ${sch.max} Schengen days, so you're within the 90-day limit for US passport holders.`}
+        Counted from ${escapeHTML(sch.countries.join(', '))}. Entry and exit days both count.</p>`;
+  }
+}
+
+// ---------- Home ----------
+
+function renderHome() {
+  const attention = $('#attention-list');
+  attention.innerHTML = '';
+  const open = openTodos();
+  open.slice(0, 5).forEach((x) => attention.appendChild(todoItem(x, { compact: true })));
+  if (!open.length) attention.innerHTML = '<li class="empty">Nothing needs attention right now. 🎉</li>';
+  else if (open.length > 5) {
+    const more = document.createElement('li');
+    more.innerHTML = `<button class="link" data-goto="todos">+ ${open.length - 5} more</button>`;
+    attention.appendChild(more);
+  }
+
+  const t = toISO(today());
+  const upcoming = sortedStops().filter((s) => s.depart > t).slice(0, 4);
+  const list = $('#upcoming-list');
+  list.innerHTML = upcoming.length ? '' : '<li class="empty">No upcoming stops.</li>';
+  upcoming.forEach((s) => {
+    const n = sortedStops().indexOf(s) + 1;
+    const status = stopStatus(s);
+    const li = document.createElement('li');
+    li.className = `upcoming ${s.continent}`;
+    li.innerHTML = `
+      <span class="num">${n}</span>
+      <span class="up-body">
+        <span class="up-title">${flagFor(s)}${escapeHTML(s.name)}${status === 'current' ? '<span class="badge">Now</span>' : ''}</span>
+        <span class="muted">${fmtDate(s.arrive)} → ${fmtDate(s.depart)} · ${daysBetween(s.arrive, s.depart)} nights${s.status === 'booked' ? ' · Booked' : ''}</span>
+      </span>
+      <span class="up-when muted">${status === 'current' ? '' : `in ${daysBetween(t, s.arrive)}d`}</span>`;
+    li.addEventListener('click', () => showStop(s.id));
+    list.appendChild(li);
+  });
+
+  $('#quiz-banner').hidden = readOnly || profileAnswered() > 0;
+}
+
+// ---------- Profile: the travel-preferences quiz ----------
+
+const PROFILE_QUESTIONS = [
+  { key: 'rhythm', label: 'Early bird or night owl?', type: 'single',
+    options: ['Early bird', 'Somewhere in between', 'Night owl'] },
+  { key: 'interests', label: 'What do you love doing when you travel?', hint: 'Pick as many as you like.', type: 'multi',
+    options: ['Food & restaurants', 'Cafés', 'Nightlife', 'Live music', 'Festivals & events', 'Museums & history',
+      'Architecture', 'Art', 'Local culture', 'Hiking & nature', 'Beaches', 'Sports', 'Markets & shopping',
+      'Photography', 'Wellness'] },
+  { key: 'food', label: 'How adventurous are you with food?', type: 'single',
+    options: ['Keep it familiar', 'Open to new things', 'Try anything once'] },
+  { key: 'pace', label: 'What pace do you like?', type: 'single',
+    options: ['Slow and deep', 'Balanced', 'See as much as possible'] },
+  { key: 'budget', label: 'Day-to-day budget?', type: 'single',
+    options: ['Shoestring', 'Moderate', 'Happy to splurge sometimes'] },
+  { key: 'social', label: 'How do you like to spend your time?', type: 'single',
+    options: ['With my travel crew', 'Meeting new people', 'Mix in some solo time'] },
+  { key: 'diet', label: 'Any dietary needs or allergies?', type: 'text', placeholder: 'e.g. vegetarian, no shellfish' },
+  { key: 'goals', label: 'What do you want to get out of this trip?', type: 'textarea',
+    placeholder: 'e.g. get comfortable speaking Spanish, see the Sahara, make friends from other countries' },
+  { key: 'mustDos', label: 'Anything you already know you have to do?', type: 'textarea',
+    placeholder: 'e.g. a cooking class in Italy, the night markets in Hanoi' },
+];
+
+const profileAnswered = () => PROFILE_QUESTIONS.filter((q) => {
+  const v = state.profile[q.key];
+  return Array.isArray(v) ? v.length : v;
+}).length;
+
+function buildProfileForm() {
+  const form = $('#profile-form');
+  form.innerHTML = PROFILE_QUESTIONS.map((q) => {
+    const field = q.type === 'text'
+      ? `<input name="${q.key}" placeholder="${escapeHTML(q.placeholder)}" />`
+      : q.type === 'textarea'
+        ? `<textarea name="${q.key}" rows="3" placeholder="${escapeHTML(q.placeholder)}"></textarea>`
+        : `<div class="opts">${q.options.map((o) => `
+            <label class="opt"><input type="${q.type === 'multi' ? 'checkbox' : 'radio'}" name="${q.key}" value="${escapeHTML(o)}" /><span>${escapeHTML(o)}</span></label>`).join('')}
+          </div>`;
+    return `<fieldset class="q">
+      <legend>${escapeHTML(q.label)}${q.hint ? ` <span class="muted">${escapeHTML(q.hint)}</span>` : ''}</legend>
+      ${field}
+    </fieldset>`;
+  }).join('');
+
+  let savedTimer;
+  form.addEventListener('input', () => {
+    const f = form.elements;
+    const profile = {};
+    PROFILE_QUESTIONS.forEach((q) => {
+      if (q.type === 'multi') profile[q.key] = [...form.querySelectorAll(`[name="${q.key}"]:checked`)].map((i) => i.value);
+      else if (q.type === 'single') profile[q.key] = form.querySelector(`[name="${q.key}"]:checked`)?.value ?? '';
+      else profile[q.key] = f[q.key].value;
+    });
+    state.profile = profile;
+    save();
+    renderHome();
+    $('#profile-saved').hidden = false;
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => { $('#profile-saved').hidden = true; }, 1500);
+  });
+}
+
+// Fill the quiz from saved answers (e.g. after syncing from another device),
+// without touching the field you're typing in.
+function renderProfile() {
+  const form = $('#profile-form');
+  PROFILE_QUESTIONS.forEach((q) => {
+    const v = state.profile[q.key];
+    if (q.type === 'text' || q.type === 'textarea') {
+      const el = form.elements[q.key];
+      if (el !== document.activeElement) el.value = v ?? '';
+    } else {
+      form.querySelectorAll(`[name="${q.key}"]`).forEach((i) => {
+        i.checked = Array.isArray(v) ? v.includes(i.value) : v === i.value;
+      });
+    }
+  });
+}
+buildProfileForm();
 
 // ---------- add / edit booking dialog ----------
 
@@ -844,7 +1239,7 @@ settingsForm.addEventListener('submit', () => {
 
 function replaceTrip(newState, label) {
   if (state.stops.length && !confirm(`Replace your current stops with ${label}?`)) return;
-  state = newState;
+  state = migrate(newState);
   save();
   settingsDialog.close();
   render(true);
@@ -1302,6 +1697,7 @@ async function startViewOnly() {
 
 // ---------- go ----------
 
+showView(location.hash.slice(1));
 render(true);
 if (readOnly) startViewOnly();
 else startSync();
